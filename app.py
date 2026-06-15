@@ -51,7 +51,7 @@ def hex_to_rgb(hex_color: str) -> tuple:
     return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
 
 
-MODEL_NAME = "birefnet-portrait"
+MODEL_NAME = "isnet-general-use"
 
 def remove_background(img: Image.Image) -> Image.Image:
     buf = io.BytesIO()
