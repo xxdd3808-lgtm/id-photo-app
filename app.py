@@ -51,15 +51,14 @@ def hex_to_rgb(hex_color: str) -> tuple:
     return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
 
 
-MODEL_NAME = "birefnet-portrait"
-MAX_INPUT_PX = 1024  # 降低输入尺寸为 900MB 模型腾内存
+MODEL_NAME = "u2net_human_seg"
+MAX_INPUT_PX = 1600  # 中等分辨率，兼顾质量和内存
 
-# 限制 ONNX Runtime 线程数，降低云端内存占用
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 
 
 def _limit_image_size(img: Image.Image, max_px: int = MAX_INPUT_PX) -> Image.Image:
-    """如果图片最长边超过 max_px，等比缩放。降低云端内存占用。"""
+    """如果图片最长边超过 max_px，等比缩放。"""
     w, h = img.size
     if max(w, h) <= max_px:
         return img
@@ -69,9 +68,32 @@ def _limit_image_size(img: Image.Image, max_px: int = MAX_INPUT_PX) -> Image.Ima
     return img.resize(new_size, Image.LANCZOS)
 
 
-@st.cache_resource(show_spinner="正在加载 AI 模型（首次需下载约 900MB）…")
+def _refine_alpha(rgb: np.ndarray, alpha: np.ndarray, radius: int = 10, eps: float = 1e-5) -> np.ndarray:
+    """Guided Filter 精修 alpha 遮罩 — 用原图结构引导，锐化发丝边缘。"""
+    guide = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY).astype(np.float32)
+    src = alpha.astype(np.float32)
+    ksize = (radius, radius)
+
+    mean_I = cv2.boxFilter(guide, -1, ksize)
+    mean_p = cv2.boxFilter(src, -1, ksize)
+    mean_Ip = cv2.boxFilter(guide * src, -1, ksize)
+    cov_Ip = mean_Ip - mean_I * mean_p
+
+    mean_II = cv2.boxFilter(guide * guide, -1, ksize)
+    var_I = mean_II - mean_I * mean_I
+
+    a = cov_Ip / (var_I + eps)
+    b = mean_p - a * mean_I
+
+    mean_a = cv2.boxFilter(a, -1, ksize)
+    mean_b = cv2.boxFilter(b, -1, ksize)
+
+    refined = mean_a * guide + mean_b
+    return np.clip(refined, 0, 255).astype(np.uint8)
+
+
+@st.cache_resource(show_spinner="正在加载 AI 模型（首次需下载约 180MB）…")
 def _load_rembg_session():
-    """加载 birefnet-portrait 抠图模型。"""
     print(f"[rembg] Loading {MODEL_NAME}...", flush=True)
     session = new_session(MODEL_NAME)
     print(f"[rembg] Model loaded OK", flush=True)
@@ -88,10 +110,15 @@ def remove_background(img: Image.Image) -> Image.Image:
         buf.seek(0)
         session = _load_rembg_session()
         print(f"[remove_bg] Running inference…", flush=True)
-        # birefnet-portrait 自身发丝质量极佳，不需要 alpha_matting 后处理
         result = remove(buf.read(), session=session)
         print(f"[remove_bg] Done, output={len(result)} bytes", flush=True)
-        return Image.open(io.BytesIO(result)).convert("RGBA")
+
+        fg = Image.open(io.BytesIO(result)).convert("RGBA")
+        arr = np.array(fg)
+        # Guided filter 精修 alpha，大幅改善发丝边缘
+        refined_alpha = _refine_alpha(arr[:, :, :3], arr[:, :, 3])
+        arr[:, :, 3] = refined_alpha
+        return Image.fromarray(arr, "RGBA")
     except Exception as e:
         print(f"[remove_bg] ERROR: {e}", flush=True)
         import traceback
