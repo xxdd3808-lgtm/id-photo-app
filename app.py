@@ -518,7 +518,7 @@ def main():
         if st.session_state.uploaded_name == file_id and st.session_state.fg_rgba is not None:
             pass
         else:
-            if st.button("✂️ 一键智能抠图", type="primary", use_container_width=True):
+            if st.button("✂️ 一键智能抠图", type="primary", width='stretch'):
                 with st.spinner("AI 正在去除背景…"):
                     st.session_state.fg_rgba = remove_background(orig_img)
                     st.session_state.final_photo = None
@@ -546,7 +546,7 @@ def main():
             with bg_cols[i]:
                 is_active = st.session_state.bg_color == hex_val
                 btn_type = "primary" if is_active else "secondary"
-                if st.button(label, key=f"bg_{label}", type=btn_type, use_container_width=True):
+                if st.button(label, key=f"bg_{label}", type=btn_type, width='stretch'):
                     st.session_state.bg_color = hex_val
                     st.session_state.auto_enhanced_base = None
                     st.session_state.final_photo = None
@@ -622,7 +622,7 @@ def main():
                 st.session_state.final_photo = None
                 st.session_state.layout_img = None
 
-            if st.button("🔄 重置裁剪位置", use_container_width=True):
+            if st.button("🔄 重置裁剪位置", width='stretch'):
                 st.session_state.offset_h = 0.0
                 st.session_state.offset_v = 0.0
                 st.session_state.final_photo = None
@@ -655,7 +655,7 @@ def main():
             upscale = max(1, disp_h // th)
             if upscale > 1:
                 preview = preview.resize((tw * upscale, th * upscale), Image.LANCZOS)
-            st.image(preview, use_container_width=False)
+            st.image(preview, width='content')
             dpi_val = 600 if "600" in st.session_state.dpi_label else 300
             st.caption(f"{tw}×{th} px · {dpi_val} DPI · {size_name}")
 
@@ -667,10 +667,10 @@ def main():
                     data=pil_to_bytes(st.session_state.final_photo, dpi=(dpi_val, dpi_val)),
                     file_name="id_photo.png",
                     mime="image/png",
-                    use_container_width=True,
+                    width='stretch',
                 )
             with dl_r:
-                if st.button("🖨️ 生成排版图", use_container_width=True):
+                if st.button("🖨️ 生成排版图", width='stretch'):
                     with st.spinner("正在拼版…"):
                         st.session_state.layout_img = build_layout_image(
                             st.session_state.final_photo,
@@ -682,7 +682,7 @@ def main():
             st.markdown("**抠图效果预览**")
             preview = apply_background(st.session_state.fg_rgba, st.session_state.bg_color)
             preview.thumbnail((600, 900), Image.LANCZOS)
-            st.image(preview, use_container_width=True)
+            st.image(preview, width='stretch')
             st.caption("调整左侧参数后预览将自动更新")
 
         else:
@@ -694,7 +694,7 @@ def main():
                     b'Upload a photo to see preview here'
                     b'</text></svg>'
                 ).decode(),
-                use_container_width=True,
+                width='stretch',
             )
 
         # ── 排版图预览 + 下载 ──
@@ -703,7 +703,7 @@ def main():
             lt = "3×3 九宫格" if "1寸" in size_name and "2寸" not in size_name else "2×2 四宫格"
             layout_preview = st.session_state.layout_img.copy()
             layout_preview.thumbnail((500, 750), Image.LANCZOS)
-            st.image(layout_preview, use_container_width=True)
+            st.image(layout_preview, width='stretch')
             cw, ch = st.session_state.layout_img.size
             dpi_val = 600 if "600" in st.session_state.dpi_label else 300
             st.caption(f"{lt} · {cw}×{ch}px · {dpi_val} DPI")
@@ -712,7 +712,7 @@ def main():
                 data=pil_to_bytes(st.session_state.layout_img, dpi=(dpi_val, dpi_val)),
                 file_name=f"id_photo_6inch_{dpi_val}dpi.png",
                 mime="image/png",
-                use_container_width=True,
+                width='stretch',
             )
 
         # ── 美颜修图（折叠面板）──
@@ -727,7 +727,7 @@ def main():
                 preset_cols = st.columns(4)
                 for i, (label, params) in enumerate(PRESETS.items()):
                     with preset_cols[i]:
-                        if st.button(label, key=f"preset_{label}", use_container_width=True):
+                        if st.button(label, key=f"preset_{label}", width='stretch'):
                             for k, v in params.items():
                                 st.session_state[k] = v
                             st.session_state.auto_enhanced_base = None
@@ -738,7 +738,7 @@ def main():
 
                 btn_cols = st.columns(2)
                 with btn_cols[0]:
-                    if st.button("🔧 一键自动优化", use_container_width=True,
+                    if st.button("🔧 一键自动优化", width='stretch',
                                   help="自动白平衡 + 自适应曝光，适合光线暗淡/偏色的照片"):
                         auto_input = apply_background(st.session_state.fg_rgba, st.session_state.bg_color)
                         auto_result, suggestions = auto_enhance(auto_input)
@@ -752,7 +752,7 @@ def main():
                         st.session_state.preview_cache_key = ""
                         st.rerun()
                 with btn_cols[1]:
-                    if st.button("↩️ 恢复原图", use_container_width=True,
+                    if st.button("↩️ 恢复原图", width='stretch',
                                   help="清除所有美颜效果，恢复到原始状态"):
                         st.session_state.auto_enhanced_base = None
                         st.session_state.smoothing = 0.0
@@ -798,7 +798,7 @@ def main():
                         offset_v=st.session_state.offset_v,
                     )
                     overlay.thumbnail((500, 750), Image.LANCZOS)
-                    st.image(overlay, use_container_width=True)
+                    st.image(overlay, width='stretch')
                     st.caption("绿框 = AI 裁剪区域 | 蓝框 = 检测到的人脸 | 灰区 = 被裁掉的部分")
 
 
