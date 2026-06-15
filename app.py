@@ -85,7 +85,16 @@ def remove_background(img: Image.Image) -> Image.Image:
         buf.seek(0)
         session = _load_rembg_session()
         print(f"[remove_bg] Running inference…", flush=True)
-        result = remove(buf.read(), session=session)
+        data = buf.read()
+        # alpha_matting 改善头发等精细边缘，pymatting 未安装时自动回退
+        try:
+            result = remove(data, session=session, alpha_matting=True,
+                           alpha_matting_foreground_threshold=240,
+                           alpha_matting_background_threshold=10,
+                           alpha_matting_erose_size=10)
+        except Exception:
+            print(f"[remove_bg] alpha_matting not available, using standard mode", flush=True)
+            result = remove(data, session=session)
         print(f"[remove_bg] Done, output={len(result)} bytes", flush=True)
         return Image.open(io.BytesIO(result)).convert("RGBA")
     except Exception as e:
@@ -98,60 +107,40 @@ def remove_background(img: Image.Image) -> Image.Image:
 
 
 def apply_background(fg: Image.Image, bg_hex: str) -> Image.Image:
-    """
-    高质量背景合成：
-    1. Alpha 通道轻微羽化
-    2. 距离变换颜色去污染 — 半透明边缘像素取最近不透明像素色
-    3. 合成到纯色背景
-    """
+    """背景合成：Alpha 羽化 + 边缘颜色校正（局部邻域，避免跨区域污染）。"""
     rgb = hex_to_rgb(bg_hex)
     rgba = np.array(fg).astype(np.float32)
     alpha = rgba[:, :, 3]
     rgb_data = rgba[:, :, :3]
 
-    # ── 1. Alpha 羽化 ──
     alpha_u8 = np.clip(alpha, 0, 255).astype(np.uint8)
-    alpha_smooth = cv2.GaussianBlur(alpha_u8, (3, 3), sigmaX=0.8)
 
-    # ── 2. 距离变换颜色去污染 ──
-    # 构建二值掩码：完全不透明像素
-    opaque_mask = (alpha_u8 >= 250).astype(np.uint8)
-    # 计算每个像素到最近不透明像素的距离
-    dist = cv2.distanceTransform(1 - opaque_mask, cv2.DIST_L2, 3)
-    # 边缘像素：半透明且距离前景不远（< 8px）
-    edge_mask = (alpha_u8 > 20) & (alpha_u8 < 250) & (dist < 8) & (dist > 0)
+    # ── 颜色去污染：只在半透明像素的局部邻域内，用不透明像素的加权平均色替换 ──
+    semi_transparent = (alpha_u8 > 30) & (alpha_u8 < 240)
+    if semi_transparent.any():
+        # 扩张不透明区域，得到"可靠前景"掩码
+        opaque = (alpha_u8 >= 250).astype(np.uint8)
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+        dilated = cv2.dilate(opaque, kernel, iterations=1)
+        # 只修正紧邻可靠前景的半透明像素
+        fix_mask = semi_transparent & (dilated > 0) & (opaque == 0)
 
-    # 对边缘像素，构造 nearest-neighbor map
-    # 使用 flood-fill 风格的最近邻查找
-    h, w = alpha_u8.shape
-    # 创建索引数组用于快速查找最近不透明像素
-    yy, xx = np.mgrid[:h, :w]
-    opaque_idx = np.column_stack([yy[opaque_mask == 1], xx[opaque_mask == 1]])  # (N, 2)
+        if fix_mask.any():
+            # 用局部加权平均色（按 alpha 加权）替换
+            corrected = cv2.edgePreservingFilter(rgb_data, flags=1, sigma_s=30, sigma_r=0.05)
+            rgb_data[fix_mask] = corrected[fix_mask]
 
-    if len(opaque_idx) > 0:
-        edge_y, edge_x = np.where(edge_mask)
-        # 对每个边缘像素，找最近的不透明像素（使用 kd-tree）
-        from scipy.spatial import cKDTree
-        tree = cKDTree(opaque_idx)
-        _, nn_idx = tree.query(np.column_stack([edge_y, edge_x]), k=1)
-        nearest_y = opaque_idx[nn_idx, 0]
-        nearest_x = opaque_idx[nn_idx, 1]
+    # ── Alpha 羽化 ──
+    alpha_smooth = cv2.GaussianBlur(alpha_u8, (5, 5), sigmaX=1.5)
 
-        # 用最近不透明像素色替换边缘像素色
-        clean_rgb = rgb_data.copy()
-        clean_rgb[edge_y, edge_x] = rgb_data[nearest_y, nearest_x]
-        rgb_data = clean_rgb
-
-    # ── 3. 合成 ──
-    alpha_norm = alpha_smooth.astype(np.float32) / 255.0
-    alpha_norm = np.clip(alpha_norm, 0, 1)
+    # ── 合成 ──
+    alpha_norm = np.clip(alpha_smooth.astype(np.float32) / 255.0, 0, 1)
     bg_color = np.array(rgb, dtype=np.float32)
-    result = np.zeros_like(rgb_data)
+    result = np.empty_like(rgb_data)
     for c in range(3):
         result[:, :, c] = rgb_data[:, :, c] * alpha_norm + bg_color[c] * (1 - alpha_norm)
 
-    result = np.clip(result, 0, 255).astype(np.uint8)
-    return Image.fromarray(result, "RGB")
+    return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8), "RGB")
 
 
 def _detect_face_rect(img: Image.Image):
