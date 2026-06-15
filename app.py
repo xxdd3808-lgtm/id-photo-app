@@ -51,8 +51,8 @@ def hex_to_rgb(hex_color: str) -> tuple:
     return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
 
 
-MODEL_NAME = "u2net_human_seg"  # 人像专用模型，发丝处理优于通用模型
-MAX_INPUT_PX = 2048  # 图片最长边限制，避免云端 OOM（证件照输出最大仅 826px）
+MODEL_NAME = "birefnet-portrait"
+MAX_INPUT_PX = 1024  # 降低输入尺寸为 900MB 模型腾内存
 
 # 限制 ONNX Runtime 线程数，降低云端内存占用
 os.environ.setdefault("OMP_NUM_THREADS", "1")
@@ -68,12 +68,25 @@ def _limit_image_size(img: Image.Image, max_px: int = MAX_INPUT_PX) -> Image.Ima
     print(f"[resize] {w}x{h} → {new_size[0]}x{new_size[1]}", flush=True)
     return img.resize(new_size, Image.LANCZOS)
 
-@st.cache_resource(show_spinner="正在加载 AI 模型（首次需下载约 180MB）…")
+
+@st.cache_resource(show_spinner="正在加载 AI 模型（首次需下载约 900MB）…")
 def _load_rembg_session():
-    """缓存的 ONNX 抠图会话 — Streamlit 推荐用 cache_resource 管理 ML 模型。"""
-    print(f"[rembg] Loading model: {MODEL_NAME}", flush=True)
-    session = new_session(MODEL_NAME)
+    """加载 birefnet-portrait，用 ONNX 内存优化减少崩溃风险。"""
+    import onnxruntime as ort
+
+    sess_opts = ort.SessionOptions()
+    sess_opts.enable_cpu_mem_arena = False      # 不预分配内存
+    sess_opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_BASIC
+    sess_opts.inter_op_num_threads = 1
+    sess_opts.intra_op_num_threads = 1
+    sess_opts.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+
+    print(f"[rembg] Loading birefnet-portrait (memory-optimized)...", flush=True)
+    session = new_session(MODEL_NAME, sess_opts=sess_opts)
     print(f"[rembg] Model loaded OK", flush=True)
+
+    import gc
+    gc.collect()
     return session
 
 
@@ -85,16 +98,8 @@ def remove_background(img: Image.Image) -> Image.Image:
         buf.seek(0)
         session = _load_rembg_session()
         print(f"[remove_bg] Running inference…", flush=True)
-        data = buf.read()
-        # alpha_matting 改善头发等精细边缘，pymatting 未安装时自动回退
-        try:
-            result = remove(data, session=session, alpha_matting=True,
-                           alpha_matting_foreground_threshold=240,
-                           alpha_matting_background_threshold=10,
-                           alpha_matting_erose_size=10)
-        except Exception:
-            print(f"[remove_bg] alpha_matting not available, using standard mode", flush=True)
-            result = remove(data, session=session)
+        # birefnet-portrait 自身发丝质量极佳，不需要 alpha_matting 后处理
+        result = remove(buf.read(), session=session)
         print(f"[remove_bg] Done, output={len(result)} bytes", flush=True)
         return Image.open(io.BytesIO(result)).convert("RGBA")
     except Exception as e:
