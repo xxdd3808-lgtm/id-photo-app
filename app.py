@@ -53,19 +53,34 @@ def hex_to_rgb(hex_color: str) -> tuple:
 
 MODEL_NAME = "isnet-general-use"
 
+# 限制 ONNX Runtime 线程数，降低云端内存占用
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+
+@st.cache_resource(show_spinner="正在加载 AI 模型（首次需下载约 180MB）…")
+def _load_rembg_session():
+    """缓存的 ONNX 抠图会话 — Streamlit 推荐用 cache_resource 管理 ML 模型。"""
+    print(f"[rembg] Loading model: {MODEL_NAME}", flush=True)
+    session = new_session(MODEL_NAME)
+    print(f"[rembg] Model loaded OK", flush=True)
+    return session
+
+
 def remove_background(img: Image.Image) -> Image.Image:
     try:
+        print(f"[remove_bg] Start, image size={img.size}", flush=True)
         buf = io.BytesIO()
         img.save(buf, format="PNG")
         buf.seek(0)
-        if "bg_session" not in st.session_state or st.session_state.get("bg_model_name") != MODEL_NAME:
-            st.session_state.bg_session = new_session(MODEL_NAME, providers=["CPUExecutionProvider"])
-            st.session_state.bg_model_name = MODEL_NAME
-        result = remove(buf.read(), session=st.session_state.bg_session)
+        session = _load_rembg_session()
+        print(f"[remove_bg] Running inference…", flush=True)
+        result = remove(buf.read(), session=session)
+        print(f"[remove_bg] Done, output={len(result)} bytes", flush=True)
         return Image.open(io.BytesIO(result)).convert("RGBA")
     except Exception as e:
-        st.error(f"抠图失败: {str(e)}")
+        print(f"[remove_bg] ERROR: {e}", flush=True)
         import traceback
+        traceback.print_exc()
+        st.error(f"抠图失败: {str(e)}")
         st.code(traceback.format_exc())
         return None
 
