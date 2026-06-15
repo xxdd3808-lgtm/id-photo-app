@@ -71,20 +71,10 @@ def _limit_image_size(img: Image.Image, max_px: int = MAX_INPUT_PX) -> Image.Ima
 
 @st.cache_resource(show_spinner="正在加载 AI 模型（首次需下载约 900MB）…")
 def _load_rembg_session():
-    """加载 birefnet-portrait，用 ONNX 内存优化减少崩溃风险。"""
-    import onnxruntime as ort
-
-    sess_opts = ort.SessionOptions()
-    sess_opts.enable_cpu_mem_arena = False      # 不预分配内存
-    sess_opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_BASIC
-    sess_opts.inter_op_num_threads = 1
-    sess_opts.intra_op_num_threads = 1
-    sess_opts.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
-
-    print(f"[rembg] Loading birefnet-portrait (memory-optimized)...", flush=True)
-    session = new_session(MODEL_NAME, sess_opts=sess_opts)
+    """加载 birefnet-portrait 抠图模型。"""
+    print(f"[rembg] Loading {MODEL_NAME}...", flush=True)
+    session = new_session(MODEL_NAME)
     print(f"[rembg] Model loaded OK", flush=True)
-
     import gc
     gc.collect()
     return session
