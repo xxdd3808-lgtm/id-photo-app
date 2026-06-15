@@ -110,13 +110,22 @@ def remove_background(img: Image.Image) -> Image.Image:
         buf.seek(0)
         session = _load_rembg_session()
         print(f"[remove_bg] Running inference…", flush=True)
-        result = remove(buf.read(), session=session)
+        data = buf.read()
+        # alpha_matting 改善发丝前景估计（pymatting 已安装）
+        try:
+            result = remove(data, session=session, alpha_matting=True,
+                           alpha_matting_foreground_threshold=240,
+                           alpha_matting_background_threshold=10,
+                           alpha_matting_erose_size=10)
+        except Exception:
+            print(f"[remove_bg] alpha_matting unavailable, fallback", flush=True)
+            result = remove(data, session=session)
         print(f"[remove_bg] Done, output={len(result)} bytes", flush=True)
 
         fg = Image.open(io.BytesIO(result)).convert("RGBA")
         arr = np.array(fg)
-        # Guided filter 精修 alpha，大幅改善发丝边缘
-        refined_alpha = _refine_alpha(arr[:, :, :3], arr[:, :, 3])
+        # Guided filter 二次精修，半径缩小以保留发丝细节
+        refined_alpha = _refine_alpha(arr[:, :, :3], arr[:, :, 3], radius=6)
         arr[:, :, 3] = refined_alpha
         return Image.fromarray(arr, "RGBA")
     except Exception as e:
