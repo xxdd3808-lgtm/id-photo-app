@@ -54,14 +54,20 @@ def hex_to_rgb(hex_color: str) -> tuple:
 MODEL_NAME = "isnet-general-use"
 
 def remove_background(img: Image.Image) -> Image.Image:
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    buf.seek(0)
-    if "bg_session" not in st.session_state or st.session_state.get("bg_model_name") != MODEL_NAME:
-        st.session_state.bg_session = new_session(MODEL_NAME, providers=["CPUExecutionProvider"])
-        st.session_state.bg_model_name = MODEL_NAME
-    result = remove(buf.read(), session=st.session_state.bg_session)
-    return Image.open(io.BytesIO(result)).convert("RGBA")
+    try:
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        buf.seek(0)
+        if "bg_session" not in st.session_state or st.session_state.get("bg_model_name") != MODEL_NAME:
+            st.session_state.bg_session = new_session(MODEL_NAME, providers=["CPUExecutionProvider"])
+            st.session_state.bg_model_name = MODEL_NAME
+        result = remove(buf.read(), session=st.session_state.bg_session)
+        return Image.open(io.BytesIO(result)).convert("RGBA")
+    except Exception as e:
+        st.error(f"抠图失败: {str(e)}")
+        import traceback
+        st.code(traceback.format_exc())
+        return None
 
 
 def apply_background(fg: Image.Image, bg_hex: str) -> Image.Image:
@@ -520,17 +526,19 @@ def main():
         else:
             if st.button("✂️ 一键智能抠图", type="primary"):
                 with st.spinner("AI 正在去除背景…"):
-                    st.session_state.fg_rgba = remove_background(orig_img)
-                    st.session_state.final_photo = None
-                    st.session_state.layout_img = None
-                    st.session_state.face_rect = None
-                    st.session_state.composited_full = None
-                    st.session_state.auto_enhanced_base = None
-                    st.session_state.offset_h = 0.0
-                    st.session_state.offset_v = 0.0
-                    st.session_state.preview_cache_key = ""
-                    st.session_state.uploaded_name = file_id
-                st.success("抠图完成！")
+                    result = remove_background(orig_img)
+                    if result is not None:
+                        st.session_state.fg_rgba = result
+                        st.session_state.final_photo = None
+                        st.session_state.layout_img = None
+                        st.session_state.face_rect = None
+                        st.session_state.composited_full = None
+                        st.session_state.auto_enhanced_base = None
+                        st.session_state.offset_h = 0.0
+                        st.session_state.offset_v = 0.0
+                        st.session_state.preview_cache_key = ""
+                        st.session_state.uploaded_name = file_id
+                        st.success("抠图完成！")
 
     st.markdown("")
 
