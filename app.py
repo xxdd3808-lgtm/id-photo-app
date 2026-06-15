@@ -52,9 +52,21 @@ def hex_to_rgb(hex_color: str) -> tuple:
 
 
 MODEL_NAME = "isnet-general-use"
+MAX_INPUT_PX = 2048  # 图片最长边限制，避免云端 OOM（证件照输出最大仅 826px）
 
 # 限制 ONNX Runtime 线程数，降低云端内存占用
 os.environ.setdefault("OMP_NUM_THREADS", "1")
+
+
+def _limit_image_size(img: Image.Image, max_px: int = MAX_INPUT_PX) -> Image.Image:
+    """如果图片最长边超过 max_px，等比缩放。降低云端内存占用。"""
+    w, h = img.size
+    if max(w, h) <= max_px:
+        return img
+    ratio = max_px / max(w, h)
+    new_size = (int(w * ratio), int(h * ratio))
+    print(f"[resize] {w}x{h} → {new_size[0]}x{new_size[1]}", flush=True)
+    return img.resize(new_size, Image.LANCZOS)
 
 @st.cache_resource(show_spinner="正在加载 AI 模型（首次需下载约 180MB）…")
 def _load_rembg_session():
@@ -534,6 +546,7 @@ def main():
 
     if uploaded:
         orig_img = Image.open(uploaded).convert("RGB")
+        orig_img = _limit_image_size(orig_img)  # 限制尺寸避免云端 OOM
         file_id = f"{uploaded.name}_{uploaded.size}"
 
         if st.session_state.uploaded_name == file_id and st.session_state.fg_rgba is not None:
@@ -666,7 +679,14 @@ def main():
     with right_col:
         # 确保 regenerate_photo 被调用
         if st.session_state.fg_rgba is not None:
-            regenerate_photo()
+            try:
+                regenerate_photo()
+            except Exception as e:
+                print(f"[regenerate] ERROR: {e}", flush=True)
+                import traceback
+                traceback.print_exc()
+                st.error(f"生成预览失败: {str(e)}")
+                st.code(traceback.format_exc())
 
         # ── 预览区 ──
         if st.session_state.final_photo is not None:
