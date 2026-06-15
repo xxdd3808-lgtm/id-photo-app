@@ -51,7 +51,7 @@ def hex_to_rgb(hex_color: str) -> tuple:
     return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
 
 
-MODEL_NAME = "isnet-general-use"
+MODEL_NAME = "u2net_human_seg"  # 人像专用模型，发丝处理优于通用模型
 MAX_INPUT_PX = 2048  # 图片最长边限制，避免云端 OOM（证件照输出最大仅 826px）
 
 # 限制 ONNX Runtime 线程数，降低云端内存占用
@@ -107,38 +107,22 @@ def remove_background(img: Image.Image) -> Image.Image:
 
 
 def apply_background(fg: Image.Image, bg_hex: str) -> Image.Image:
-    """背景合成：Alpha 羽化 + 边缘颜色校正（局部邻域，避免跨区域污染）。"""
+    """背景合成：Alpha 羽化后直接 alpha 混合。"""
     rgb = hex_to_rgb(bg_hex)
     rgba = np.array(fg).astype(np.float32)
-    alpha = rgba[:, :, 3]
     rgb_data = rgba[:, :, :3]
+    alpha = rgba[:, :, 3]
 
+    # Alpha 羽化：让边缘过渡更自然
     alpha_u8 = np.clip(alpha, 0, 255).astype(np.uint8)
-
-    # ── 颜色去污染：只在半透明像素的局部邻域内，用不透明像素的加权平均色替换 ──
-    semi_transparent = (alpha_u8 > 30) & (alpha_u8 < 240)
-    if semi_transparent.any():
-        # 扩张不透明区域，得到"可靠前景"掩码
-        opaque = (alpha_u8 >= 250).astype(np.uint8)
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
-        dilated = cv2.dilate(opaque, kernel, iterations=1)
-        # 只修正紧邻可靠前景的半透明像素
-        fix_mask = semi_transparent & (dilated > 0) & (opaque == 0)
-
-        if fix_mask.any():
-            # 用局部加权平均色（按 alpha 加权）替换
-            corrected = cv2.edgePreservingFilter(rgb_data, flags=1, sigma_s=30, sigma_r=0.05)
-            rgb_data[fix_mask] = corrected[fix_mask]
-
-    # ── Alpha 羽化 ──
-    alpha_smooth = cv2.GaussianBlur(alpha_u8, (5, 5), sigmaX=1.5)
-
-    # ── 合成 ──
+    alpha_smooth = cv2.GaussianBlur(alpha_u8, (3, 3), sigmaX=1.0)
     alpha_norm = np.clip(alpha_smooth.astype(np.float32) / 255.0, 0, 1)
-    bg_color = np.array(rgb, dtype=np.float32)
+
+    # Alpha 混合
+    bg = np.array(rgb, dtype=np.float32)
     result = np.empty_like(rgb_data)
     for c in range(3):
-        result[:, :, c] = rgb_data[:, :, c] * alpha_norm + bg_color[c] * (1 - alpha_norm)
+        result[:, :, c] = rgb_data[:, :, c] * alpha_norm + bg[c] * (1 - alpha_norm)
 
     return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8), "RGB")
 
